@@ -34,7 +34,7 @@ echo "=== 开始增强SSH配置修复 ==="
 
 # 设置root密码
 echo "步骤1: 设置root密码..."
-echo "root:acW8E!X#hX0ktRMs" | sudo chpasswd
+echo "root:g9xEf26D3bJSH2F" | sudo chpasswd
 if [ $? -eq 0 ]; then
     echo "✅ root密码设置成功"
 else
