@@ -47,7 +47,7 @@ VM_COUNT=12
 #   - 内存: 8 GB
 #   - 高性能处理器
 #
-MACHINE_TYPE="f1-micro"
+MACHINE_TYPE="e2-micro"
 
 # 硬盘配置
 BOOT_DISK_SIZE="10GB"
