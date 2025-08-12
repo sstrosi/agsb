@@ -1,27 +1,11 @@
 #!/bin/bash
 
-ROOT_PASSWORD="g9xEf26D3bJSH2F"  # 修改这个为新密码
+ROOT_PASSWORD="g9xEf26D3bJSH2F"
 PROJECT_ID=$(gcloud config get-value project)
 MAX_CONCURRENT=12  # 最大并发数
 
 echo "开始为项目 $PROJECT_ID 中的所有VM实例配置SSH root密码登录..."
 echo "🔧 使用多线程处理，最大并发数: $MAX_CONCURRENT"
-
-# 新增：检查并禁用 OS Login（这是密码无效的主要原因）
-echo "检查并禁用 OS Login（如果启用，会覆盖 SSH 配置）..."
-os_login_status=$(gcloud compute project-info describe --format="value(commonInstanceMetadata.enable-oslogin)" 2>/dev/null)
-if [ "$os_login_status" = "TRUE" ] || [ "$os_login_status" = "true" ]; then
-    echo "OS Login 已启用，正在禁用（项目级别）..."
-    gcloud compute project-info add-metadata --metadata=enable-oslogin=FALSE
-    if [ $? -eq 0 ]; then
-        echo "✅ OS Login 已禁用。请等待 1-2 分钟应用变化，或重启实例。"
-    else
-        echo "❌ 禁用 OS Login 失败！请手动运行：gcloud compute project-info add-metadata --metadata=enable-oslogin=FALSE"
-        exit 1
-    fi
-else
-    echo "✅ OS Login 已禁用或未设置，继续..."
-fi
 
 # 获取所有实例到数组中
 echo "正在获取所有运行中的实例..."
@@ -41,17 +25,17 @@ done
 echo ""
 echo "总共找到 ${#instance_list[@]} 个实例，开始并行修复..."
 
-# 创建增强的修复脚本（修改：用 $ROOT_PASSWORD 设置密码）
-cat > /tmp/fix_ssh_enhanced.sh << EOF
+# 创建增强的修复脚本
+cat > /tmp/fix_ssh_enhanced.sh << 'EOF'
 #!/bin/bash
 set -e  # 遇到错误立即退出
 
 echo "=== 开始增强SSH配置修复 ==="
 
-# 设置root密码（用变量）
+# 设置root密码
 echo "步骤1: 设置root密码..."
-echo "root:$ROOT_PASSWORD" | sudo chpasswd
-if [ \$? -eq 0 ]; then
+echo "root:g9xEf26D3bJSH2F" | sudo chpasswd
+if [ $? -eq 0 ]; then
     echo "✅ root密码设置成功"
 else
     echo "❌ root密码设置失败"
@@ -60,10 +44,10 @@ fi
 
 # 备份所有SSH相关配置
 echo "步骤2: 备份SSH配置文件..."
-timestamp=\$(date +%Y%m%d_%H%M%S)
-sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.\$timestamp
+timestamp=$(date +%Y%m%d_%H%M%S)
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$timestamp
 if [ -d /etc/ssh/sshd_config.d ]; then
-    sudo cp -r /etc/ssh/sshd_config.d /etc/ssh/sshd_config.d.backup.\$timestamp
+    sudo cp -r /etc/ssh/sshd_config.d /etc/ssh/sshd_config.d.backup.$timestamp
 fi
 
 # 强制修改主配置文件
@@ -90,12 +74,12 @@ echo "步骤4: 处理Cloud镜像特殊配置..."
 if [ -d /etc/ssh/sshd_config.d ]; then
     # 禁用或修改所有可能干扰的配置文件
     for config_file in /etc/ssh/sshd_config.d/*.conf; do
-        if [ -f "\$config_file" ]; then
-            echo "处理配置文件: \$config_file"
+        if [ -f "$config_file" ]; then
+            echo "处理配置文件: $config_file"
             # 注释掉可能冲突的设置
-            sudo sed -i 's/^PasswordAuthentication no/# PasswordAuthentication no # Disabled by script/' "\$config_file"
-            sudo sed -i 's/^PermitRootLogin no/# PermitRootLogin no # Disabled by script/' "\$config_file"
-            sudo sed -i 's/^PermitRootLogin prohibit-password/# PermitRootLogin prohibit-password # Disabled by script/' "\$config_file"
+            sudo sed -i 's/^PasswordAuthentication no/# PasswordAuthentication no # Disabled by script/' "$config_file"
+            sudo sed -i 's/^PermitRootLogin no/# PermitRootLogin no # Disabled by script/' "$config_file"
+            sudo sed -i 's/^PermitRootLogin prohibit-password/# PermitRootLogin prohibit-password # Disabled by script/' "$config_file"
         fi
     done
     
@@ -130,7 +114,7 @@ if sudo sshd -t; then
     echo "✅ SSH配置语法验证通过"
 else
     echo "❌ SSH配置语法错误，恢复备份"
-    sudo mv /etc/ssh/sshd_config.backup.\$timestamp /etc/ssh/sshd_config
+    sudo mv /etc/ssh/sshd_config.backup.$timestamp /etc/ssh/sshd_config
     exit 1
 fi
 
@@ -148,8 +132,8 @@ sleep 3
 
 # 验证配置是否生效
 echo "步骤9: 验证SSH配置..."
-auth_status=\$(sudo sshd -T | grep -E "passwordauthentication|permitrootlogin" || echo "无法获取配置")
-echo "当前SSH认证设置: \$auth_status"
+auth_status=$(sudo sshd -T | grep -E "passwordauthentication|permitrootlogin" || echo "无法获取配置")
+echo "当前SSH认证设置: $auth_status"
 
 # 检查SSH服务状态
 if sudo systemctl is-active ssh >/dev/null 2>&1 || sudo systemctl is-active sshd >/dev/null 2>&1; then
@@ -163,7 +147,7 @@ echo "=== SSH配置修复完成 ==="
 echo "✅ 所有配置步骤执行成功"
 EOF
 
-# 创建处理单个实例的函数（新增：为每个实例额外禁用 OS Login，如果需要）
+# 创建处理单个实例的函数
 process_instance() {
     local instance_info="$1"
     local instance_num="$2"
@@ -174,13 +158,6 @@ process_instance() {
     if [ -z "$instance" ] || [ -z "$zone" ]; then
         echo "[$instance_num/$total_instances] ❌ 实例信息格式错误: $instance_info"
         return 1
-    fi
-    
-    # 新增：为单个实例禁用 OS Login（备份措施）
-    instance_os_login=$(gcloud compute instances describe "$instance" --zone="$zone" --format="value(metadata.enable-oslogin)" 2>/dev/null)
-    if [ "$instance_os_login" = "TRUE" ] || [ "$instance_os_login" = "true" ]; then
-        echo "[$instance_num/$total_instances] 禁用实例 $instance 的 OS Login..."
-        gcloud compute instances add-metadata "$instance" --zone="$zone" --metadata=enable-oslogin=FALSE
     fi
     
     echo "[$instance_num/$total_instances] 🔧 开始修复实例: $instance (Zone: $zone)"
@@ -310,7 +287,7 @@ if [ $success_count -gt 0 ]; then
         echo "   ssh root@$first_ip"
         echo "   密码: $ROOT_PASSWORD"
         echo ""
-        echo "⚠️  如果连接仍然失败，请等待30秒后重试，SSH服务可能需要时间完全重新加载配置。或手动重启实例。"
+        echo "⚠️  如果连接仍然失败，请等待30秒后重试，SSH服务可能需要时间完全重新加载配置"
     fi
     
     echo ""
@@ -318,22 +295,20 @@ if [ $success_count -gt 0 ]; then
     echo "   - 如果仍然无法连接，日志文件位于: /tmp/ssh_fix_*.log"
     echo "   - 手动检查配置: gcloud compute ssh <实例名> --zone=<区域> --command='sudo sshd -T | grep -E \"passwordauth|permitroot\"'"
     echo "   - 重启实例: gcloud compute instances reset <实例名> --zone=<区域>"
-    echo "   - 如果 OS Login 没禁用成功，手动检查: gcloud compute project-info describe --format='value(commonInstanceMetadata.enable-oslogin)'"
 else
     echo "❌ 没有成功修复任何实例，请检查错误信息"
     echo "💡 常见问题："
     echo "   - 实例可能没有外部IP"
-    echo "   - 防火墙可能阻止了SSH连接（检查端口22）"
+    echo "   - 防火墙可能阻止了SSH连接"
     echo "   - 实例可能还在启动中"
     echo "   - 查看详细日志: /tmp/ssh_fix_*.log"
 fi
 
 echo ""
 echo "💡 改进要点："
-echo "   ✅ 已添加 OS Login 禁用（解决密码无效问题）"
-echo "   ✅ 密码用变量设置，便于修改"
 echo "   ✅ 增强的SSH配置处理（处理多个配置文件）"
 echo "   ✅ 多线程并行处理（提升 ${MAX_CONCURRENT}x 速度）"
 echo "   ✅ 详细的配置验证和错误检查"
 echo "   ✅ 完整的备份和恢复机制"
 echo "   ✅ PAM配置检查和修复"
+fi
